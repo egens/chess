@@ -22,14 +22,14 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#1b1d26');
+scene.background = new THREE.Color('#1e1f22');
 
 // Fixed camera looking straight down; a narrow field of view keeps the board almost flat
 // while still showing a hint of the pieces' relief.
 const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 200);
 
-scene.add(new THREE.HemisphereLight('#fff3e0', '#2a2440', 1.0));
-const sun = new THREE.DirectionalLight('#fff1d6', 2.2);
+scene.add(new THREE.HemisphereLight('#ffffff', '#3a3f4a', 1.0));
+const sun = new THREE.DirectionalLight('#ffffff', 2.2);
 sun.position.set(-3, 12, -4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -47,103 +47,15 @@ scene.add(board);
 
 const table = new THREE.Mesh(
   new THREE.PlaneGeometry(200, 200),
-  new THREE.MeshStandardMaterial({ color: '#23252f', roughness: 1 }),
+  new THREE.MeshStandardMaterial({ color: '#1e1f22', roughness: 1 }),
 );
 table.rotation.x = -Math.PI / 2;
 table.position.y = TABLE_Y;
 table.receiveShadow = true;
 scene.add(table);
 
-const labels = addCoordinates();
+let labels = [];
 const fire = new Fire(scene);
-
-// ---------- themes ----------
-// 'voxel': wooden voxel board with voxel figurines; 'classic': flat blue board with 2D pieces.
-const THEMES = {
-  voxel: { background: '#1b1d26', table: '#23252f' },
-  classic: { background: '#1e1f22', table: '#1e1f22' },
-};
-let theme = THEMES[readPref('theme')] ? readPref('theme') : 'voxel';
-
-function readPref(k) { try { return localStorage.getItem(k); } catch { return null; } }
-function writePref(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } }
-
-const classicCanvas = document.createElement('canvas');
-classicCanvas.width = classicCanvas.height = 1024;
-const classicTexture = new THREE.CanvasTexture(classicCanvas);
-classicTexture.colorSpace = THREE.SRGBColorSpace;
-classicTexture.anisotropy = 4;
-const classicBoard = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshBasicMaterial({ map: classicTexture }));
-classicBoard.rotation.x = -Math.PI / 2;
-classicBoard.position.y = 0.001;
-scene.add(classicBoard);
-
-// Blue board with soft, slightly shaded squares and coordinates tucked into the corners.
-function drawClassicBoard(view) {
-  const x = classicCanvas.getContext('2d'), S = 128;
-  for (let f = 0; f < 8; f++) {
-    for (let r = 0; r < 8; r++) {
-      const light = (f + r) & 1;
-      const px = f * S, py = (7 - r) * S; // canvas top is rank 8, left is file a
-      const g = x.createRadialGradient(px + S / 2, py + S / 2, S * 0.1, px + S / 2, py + S / 2, S * 0.75);
-      g.addColorStop(0, light ? '#e3e8ef' : '#6f97c8');
-      g.addColorStop(1, light ? '#c1c9d5' : '#4f74a4');
-      x.fillStyle = g;
-      x.fillRect(px, py, S, S);
-    }
-  }
-  x.font = 'bold 22px system-ui, sans-serif';
-  const label = (text, sq, corner) => {
-    const f = sq & 7, r = sq >> 3;
-    const light = (f + r) & 1;
-    x.fillStyle = light ? '#5476a6' : '#dfe6ee';
-    x.save();
-    x.translate(f * S + S / 2, (7 - r) * S + S / 2);
-    if (view === 'b') x.rotate(Math.PI); // keep the text upright for the player with Black
-    x.textAlign = corner === 'tr' ? 'right' : 'left';
-    x.textBaseline = corner === 'tr' ? 'top' : 'bottom';
-    x.fillText(text, corner === 'tr' ? S / 2 - 8 : -S / 2 + 8, corner === 'tr' ? -S / 2 + 6 : S / 2 - 4);
-    x.restore();
-  };
-  // Ranks on the viewer's right-hand file, files along the viewer's bottom rank.
-  for (let i = 0; i < 8; i++) {
-    if (view === 'w') {
-      label(String(i + 1), i * 8 + 7, 'tr');
-      label('abcdefgh'[i], i, 'bl');
-    } else {
-      label(String(i + 1), i * 8, 'tr');
-      label('abcdefgh'[i], 56 + i, 'bl');
-    }
-  }
-  classicTexture.needsUpdate = true;
-}
-
-const classicMaterials = new Map();
-function classicMaterial(p) {
-  if (!classicMaterials.has(p)) {
-    const tex = new THREE.CanvasTexture(pieceArt.get(p));
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    classicMaterials.set(p, new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.02, depthWrite: false }));
-  }
-  return classicMaterials.get(p);
-}
-const classicPieceGeo = new THREE.PlaneGeometry(1, 1);
-const isSharedMaterial = (m) => m === voxelMaterial || [...classicMaterials.values()].includes(m);
-
-function applyTheme() {
-  const t = THEMES[theme];
-  scene.background.set(t.background);
-  table.material.color.set(t.table);
-  const voxel = theme === 'voxel';
-  board.visible = voxel;
-  for (const l of labels) l.visible = voxel;
-  classicBoard.visible = !voxel;
-  if (!voxel) drawClassicBoard(viewFrom);
-  syncPieces();
-  refreshMarkers();
-  placeCamera();
-}
 
 const sqPos = (sq) => new THREE.Vector3(fileOf(sq) - 3.5, 0, 3.5 - rankOf(sq));
 
@@ -212,7 +124,7 @@ let hoverSq = -1;
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  status: $('status'), moves: $('moves'), mode: $('mode'), level: $('level'), theme: $('theme'),
+  status: $('status'), moves: $('moves'), mode: $('mode'), level: $('level'),
   promo: $('promo'), banner: $('banner'), bannerText: $('banner-text'),
 };
 
@@ -240,20 +152,11 @@ function isHumanTurn() {
   return h === null || h === game.turn;
 }
 
-// A piece is a group (positioned on the board, turned to face the viewer) holding its body:
-// a voxel figurine or a flat picture, depending on the theme.
+// A piece is a group (positioned on the board, turned to face the viewer) holding its voxel body.
 function makePieceMesh(p) {
-  let body;
-  if (theme === 'classic') {
-    body = new THREE.Mesh(classicPieceGeo, classicMaterial(p));
-    body.rotation.x = -Math.PI / 2;
-    body.position.y = 0.01;
-    body.renderOrder = 1;
-  } else {
-    body = new THREE.Mesh(pieceGeometry(p[1], p[0]).geometry, voxelMaterial);
-    body.castShadow = true;
-    body.receiveShadow = true;
-  }
+  const body = new THREE.Mesh(pieceGeometry(p[1], p[0]).geometry, voxelMaterial);
+  body.castShadow = true;
+  body.receiveShadow = true;
   const obj = new THREE.Group();
   obj.add(body);
   obj.userData.body = body;
@@ -265,15 +168,15 @@ function makePieceMesh(p) {
 
 function disposePiece(obj) {
   const m = obj.userData.body.material;
-  if (!isSharedMaterial(m)) m.dispose();
+  if (m !== voxelMaterial) m.dispose();
 }
 
 function setBurn(obj, level) {
   obj.userData.burn = level;
   const body = obj.userData.body;
-  if (level > 0 && isSharedMaterial(body.material)) {
+  if (level > 0 && body.material === voxelMaterial) {
     body.material = body.material.clone();
-    if (body.material.emissive) body.material.emissive = new THREE.Color('#ff5a14');
+    body.material.emissive = new THREE.Color('#ff5a14');
   }
 }
 
@@ -540,8 +443,8 @@ function stepDebris(dt) {
         p.vel.y -= 14 * dt;
         p.pos.addScaledVector(p.vel, dt);
         p.rot.x += p.spin.x * dt; p.rot.y += p.spin.y * dt; p.rot.z += p.spin.z * dt;
-        const onBoard = Math.abs(p.pos.x) < 4.75 && Math.abs(p.pos.z) < 4.75;
-        const floor = (onBoard ? (Math.abs(p.pos.x) < 4 && Math.abs(p.pos.z) < 4 ? 0 : 0.06) : TABLE_Y) + VOXEL / 2;
+        const onBoard = Math.abs(p.pos.x) < 4 && Math.abs(p.pos.z) < 4;
+        const floor = (onBoard ? 0 : TABLE_Y) + VOXEL / 2;
         if (p.pos.y < floor && (onBoard ? p.pos.y > floor - 0.3 : true)) {
           p.pos.y = floor;
           if (Math.abs(p.vel.y) < 0.8) {
@@ -776,8 +679,7 @@ function undo() {
 function setView(color) {
   viewFrom = color;
   for (const mesh of pieces.values()) mesh.rotation.y = color === 'w' ? 0 : Math.PI;
-  for (const l of labels) l.rotation.z = color === 'w' ? 0 : Math.PI;
-  if (theme === 'classic') drawClassicBoard(color);
+  placeCoordinates(color);
   fire.wind.set(0, 0, color === 'w' ? -0.18 : 0.18); // flames lean towards the top of the screen
   placeCamera();
 }
@@ -791,7 +693,7 @@ function placeCamera() {
   else if (W < H) top = panel.bottom;
   const pad = 12;
   const aw = W - left - pad * 2, ah = H - top - pad * 2;
-  const SIZE = theme === 'classic' ? 8.3 : 9.6; // the classic board has no frame
+  const SIZE = 8.3; // the board itself plus a thin margin
   const wpp = Math.max(SIZE / aw, SIZE / ah); // world units per pixel at board level
   const dist = (H * wpp) / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const cx = left + pad + aw / 2 - W / 2, cy = top + pad + ah / 2 - H / 2;
@@ -1128,33 +1030,52 @@ function renderOnline() {
   }
 }
 
-// ---------- coordinates on the frame ----------
-function addCoordinates() {
-  const list = [];
-  const make = (text) => {
+// ---------- coordinates inside the squares ----------
+// Rank numbers in the top-right corner of the viewer's right-hand file, file letters in the
+// bottom-left corner of the viewer's bottom rank; blue on light squares, pale on dark ones.
+const labelGeo = new THREE.PlaneGeometry(0.2, 0.2);
+const labelTextures = new Map();
+function labelTexture(text, onLight) {
+  const k = text + onLight;
+  if (!labelTextures.has(k)) {
     const c = document.createElement('canvas');
     c.width = c.height = 64;
     const x = c.getContext('2d');
-    x.fillStyle = '#e9d8b0';
-    x.font = 'bold 44px monospace';
+    x.fillStyle = onLight ? '#4f6f9f' : '#e4e9f0';
+    x.font = 'bold 50px system-ui, sans-serif';
     x.textAlign = 'center';
     x.textBaseline = 'middle';
-    x.fillText(text, 32, 34);
+    x.fillText(text, 32, 36);
     const tex = new THREE.CanvasTexture(c);
-    tex.magFilter = THREE.NearestFilter;
     tex.colorSpace = THREE.SRGBColorSpace;
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    tex.anisotropy = 4;
+    labelTextures.set(k, tex);
+  }
+  return labelTextures.get(k);
+}
+
+function placeCoordinates(view) {
+  for (const l of labels) {
+    scene.remove(l);
+    l.material.dispose();
+  }
+  labels = [];
+  const s = view === 'w' ? 1 : -1; // screen right is +x*s, screen up is -z*s
+  const add = (text, sq, dx, dz) => {
+    const light = ((sq & 7) + (sq >> 3)) & 1;
+    const m = new THREE.Mesh(labelGeo, new THREE.MeshBasicMaterial({
+      map: labelTexture(text, light), transparent: true, depthWrite: false,
+    }));
     m.rotation.x = -Math.PI / 2;
+    m.rotation.z = view === 'w' ? 0 : Math.PI;
+    m.position.copy(sqPos(sq)).add(new THREE.Vector3(dx * s, 0.012, dz * s));
     scene.add(m);
-    list.push(m);
-    return m;
+    labels.push(m);
   };
   for (let i = 0; i < 8; i++) {
-    for (const z of [4.37, -4.37]) make('abcdefgh'[i]).position.set(i - 3.5, 0.09, z);
-    for (const x of [-4.37, 4.37]) make(String(i + 1)).position.set(x, 0.09, 3.5 - i);
+    add(String(i + 1), i * 8 + (view === 'w' ? 7 : 0), 0.37, -0.37);
+    add('abcdefgh'[i], (view === 'w' ? 0 : 56) + i, -0.37, 0.37);
   }
-  return list;
 }
 
 // ---------- loop ----------
@@ -1193,9 +1114,7 @@ renderer.setAnimationLoop(() => {
     if (burn > 0 && mesh.parent) {
       sources.push({ key: mesh.uuid, pos: mesh.position, level: burn });
       const glow = (0.6 + Math.min(burn, 6) * 0.1) * (0.8 + Math.sin(t * 13 + sq) * 0.2);
-      const mat = mesh.userData.body.material;
-      if (mat.emissive) mat.emissiveIntensity = glow * 0.06;
-      else mat.color.setRGB(1, 1 - glow * 0.12, 1 - glow * 0.22); // warm tint on flat pieces
+      mesh.userData.body.material.emissiveIntensity = glow * 0.06;
     }
   }
   fire.update(dt, t, sources);
@@ -1206,15 +1125,8 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
-ui.theme.value = theme;
-ui.theme.addEventListener('change', () => {
-  theme = ui.theme.value;
-  writePref('theme', theme);
-  applyTheme();
-});
 resetBoard();
 setView('w');
-applyTheme();
 updateStatus();
 
 // Coming back from the lichess login page.

@@ -1,5 +1,5 @@
 // Classic 2D piece art (cburnett set, see assets/pieces/README.md), rasterized once at startup.
-// Used directly by the "classic" theme and as the source shape for the voxel figurines.
+// It is the source shape for the voxel figurines.
 const TYPES = ['P', 'N', 'B', 'R', 'Q', 'K'];
 const SIZE = 256;
 

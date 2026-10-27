@@ -121,26 +121,22 @@ export function pieceGeometry(type, color) {
   return cache.get(k);
 }
 
-// Board: every square is a 4x4 patch of slightly uneven voxel tiles, plus a wooden frame.
+// Board: no frame, every square is a 4x4 patch of slightly uneven voxel tiles in the classic
+// blue-and-white palette, lighter in the middle of the square and darker towards its edges.
 export function boardGeometry() {
   const boxes = [];
-  const light = new THREE.Color('#d8c49a'), dark = new THREE.Color('#6e4b30');
-  const frame = new THREE.Color('#3b2618');
+  const light = [new THREE.Color('#e4e9f0'), new THREE.Color('#bfc8d4')];
+  const dark = [new THREE.Color('#729acb'), new THREE.Color('#4e73a3')];
   const N = 4, s = 1 / N;
-  for (let gx = -3; gx < 8 * N + 3; gx++) {
-    for (let gz = -3; gz < 8 * N + 3; gz++) {
-      const inside = gx >= 0 && gx < 8 * N && gz >= 0 && gz < 8 * N;
+  for (let gx = 0; gx < 8 * N; gx++) {
+    for (let gz = 0; gz < 8 * N; gz++) {
       const h = hash(gx, 7, gz);
-      let c, top;
-      if (inside) {
-        const file = Math.floor(gx / N), rank = Math.floor(gz / N);
-        c = ((file + rank) & 1 ? light : dark).clone();
-        c.multiplyScalar(0.92 + h * 0.14);
-        top = (h - 0.5) * 0.012;
-      } else {
-        c = frame.clone().multiplyScalar(0.85 + h * 0.3);
-        top = 0.06 + (h - 0.5) * 0.02;
-      }
+      const file = Math.floor(gx / N), rank = Math.floor(gz / N);
+      const [center, edge] = (file + rank) & 1 ? light : dark;
+      const dx = (gx % N + 0.5) / N - 0.5, dz = (gz % N + 0.5) / N - 0.5;
+      const c = center.clone().lerp(edge, Math.min(1, Math.hypot(dx, dz) / 0.53));
+      c.multiplyScalar(0.97 + h * 0.06);
+      const top = (h - 0.5) * 0.012;
       const height = 0.35 + top;
       boxes.push({
         x: -4 + (gx + 0.5) * s, z: 4 - (gz + 0.5) * s, y: top - height / 2,
