@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Воксельные шахматы</title>
+  <meta name="description" content="Браузерные шахматы с воксельной графикой: фигуры разлетаются на кубики при взятии.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='5' y='1' width='6' height='3' fill='%23c9a227'/><rect x='6' y='4' width='4' height='7' fill='%23efe6cf'/><rect x='3' y='11' width='10' height='4' fill='%23efe6cf'/></svg>">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <aside id="panel">
+    <header>
+      <h1>Воксельные шахматы</h1>
+      <button id="panel-toggle" title="Свернуть панель">☰</button>
+    </header>
+    <p id="status">Загрузка…</p>
+    <div class="body">
+      <label>Режим
+        <select id="mode">
+          <option value="white">Я играю белыми</option>
+          <option value="black">Я играю чёрными</option>
+          <option value="pvp">Два игрока</option>
+        </select>
+      </label>
+      <label>Сила компьютера
+        <select id="level">
+          <option value="1">Новичок</option>
+          <option value="2" selected>Любитель</option>
+          <option value="3">Клубный</option>
+          <option value="4">Сильный</option>
+        </select>
+      </label>
+      <div class="buttons">
+        <button id="new">Новая игра</button>
+        <button id="undo">Отменить ход</button>
+        <button id="flip">Повернуть доску</button>
+        <button id="sound" title="Звук">🔊</button>
+      </div>
+      <ol id="moves"></ol>
+      <p class="hint">Клик — выбрать фигуру и ход. Перетаскивание — вращать камеру, колесо — масштаб.</p>
+    </div>
+  </aside>
+
+  <div id="promo" hidden>
+    <p>Превращение пешки</p>
+    <div>
+      <button data-piece="Q">♛<span>Ферзь</span></button>
+      <button data-piece="R">♜<span>Ладья</span></button>
+      <button data-piece="B">♝<span>Слон</span></button>
+      <button data-piece="N">♞<span>Конь</span></button>
+    </div>
+  </div>
+
+  <div id="banner" hidden>
+    <p id="banner-text"></p>
+    <button id="banner-new">Сыграть ещё</button>
+  </div>
+
+  <noscript>Для игры нужен JavaScript и браузер с поддержкой WebGL.</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
