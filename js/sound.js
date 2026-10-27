@@ -48,6 +48,11 @@ export class Sound {
     // A few clattering voxels landing.
     for (let i = 0; i < 6; i++) setTimeout(() => this.tone(900 + Math.random() * 900, 0.03, 'square', 0.03), 250 + i * 70 + Math.random() * 60);
   }
+  ignite() {
+    // Soft "whoomp" of catching fire.
+    if (!this.enabled || !this.ctx) return;
+    setTimeout(() => { this.noise(0.9, 0.35, 600); this.tone(70, 0.6, 'sine', 0.15, 1.6); }, 120);
+  }
   check() { this.tone(880, 0.12, 'square', 0.05); setTimeout(() => this.tone(660, 0.16, 'square', 0.05), 120); }
   promote() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.tone(f, 0.15, 'triangle', 0.08), i * 80)); }
 }

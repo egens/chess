@@ -1,34 +1,91 @@
 // Voxel models for the pieces and a face-culling mesher that turns them into BufferGeometry.
 import * as THREE from 'three';
 
-export const VOXEL = 0.08; // edge length of one piece voxel in world units (a board square is 1)
+export const VOXEL = 0.065; // edge length of one piece voxel in world units (a board square is 1)
 
-// Radius per layer, bottom to top. A voxel (x, z) with x, z in -4..4 is filled if x² + z² <= r².
-const PROFILES = {
-  P: [4.3, 3.8, 3.2, 2.3, 1.6, 1.6, 1.6, 2.6, 1.5, 2.3, 2.6, 2.6, 2.3, 1.5],
-  R: [4.3, 3.8, 3.2, 2.6, 2.6, 2.3, 2.3, 2.3, 2.3, 2.3, 2.6, 3.2, 3.6, 3.6, 3.6, 3.6],
-  B: [4.3, 3.8, 3.2, 2.3, 1.6, 1.6, 1.6, 1.6, 2.6, 1.5, 2.3, 2.6, 2.6, 2.6, 2.3, 2.3, 1.5, 1.1, 0.5, 1.1, 0.5],
-  Q: [4.3, 3.8, 3.2, 2.6, 2.3, 1.6, 1.6, 1.6, 1.6, 1.6, 2.3, 3.2, 1.6, 2.3, 2.6, 3.2, 3.6, 3.6, 3.6, 1.6, 1.1, 1.5, 1.1],
-  K: [4.3, 3.8, 3.2, 2.6, 2.3, 1.6, 1.6, 1.6, 1.6, 1.6, 2.3, 3.2, 1.6, 2.3, 2.6, 3.2, 3.2, 2.3, 1.1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-  N: [4.3, 3.8, 3.2, 2.6],
+// v2 pieces are made to be read from straight above: a round token with the classic chess
+// silhouette standing out in relief. Rows go from the far edge of the token (screen top) down,
+// columns left to right, 11x11. 'o' marks an accent voxel (the knight's eye).
+const GLYPHS = {
+  P: [
+    '...........',
+    '....###....',
+    '...#####...',
+    '...#####...',
+    '....###....',
+    '...#####...',
+    '....###....',
+    '....###....',
+    '...#####...',
+    '..#######..',
+    '..#######..',
+  ],
+  R: [
+    '...........',
+    '.##..#..##.',
+    '.#########.',
+    '..#######..',
+    '...#####...',
+    '...#####...',
+    '...#####...',
+    '...#####...',
+    '..#######..',
+    '.#########.',
+    '.#########.',
+  ],
+  N: [
+    '....#.#....',
+    '...#####...',
+    '..#######..',
+    '.##o######.',
+    '.#########.',
+    '.###..####.',
+    '......####.',
+    '.....#####.',
+    '....######.',
+    '..########.',
+    '.#########.',
+  ],
+  B: [
+    '.....#.....',
+    '....###....',
+    '...###.#...',
+    '...##.##...',
+    '...#####...',
+    '....###....',
+    '...#####...',
+    '....###....',
+    '....###....',
+    '..#######..',
+    '.#########.',
+  ],
+  Q: [
+    '#....#....#',
+    '.#..###..#.',
+    '.##.###.##.',
+    '.#########.',
+    '..#######..',
+    '...#####...',
+    '....###....',
+    '...#####...',
+    '....###....',
+    '..#######..',
+    '.#########.',
+  ],
+  K: [
+    '.....#.....',
+    '....###....',
+    '.....#.....',
+    '..##.#.##..',
+    '.#########.',
+    '.#########.',
+    '..#######..',
+    '...#####...',
+    '....###....',
+    '..#######..',
+    '.#########.',
+  ],
 };
-
-// Knight head side profile, bottom to top, columns are z = -4..4 (front = +z).
-const KNIGHT_SIDE = [
-  '..#####..',
-  '..####...',
-  '..####...',
-  '..#####..',
-  '.######..',
-  '.#######.',
-  '.########',
-  '.########',
-  '..#######',
-  '..######.',
-  '..#####..',
-  '..####...',
-  '..#..#...',
-];
 
 function hash(x, y, z) {
   let h = (x * 374761393 + y * 668265263 + z * 2147483647) | 0;
@@ -36,53 +93,29 @@ function hash(x, y, z) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
 }
 
-// Returns a list of voxels { x, y, z, accent } for a piece type in its local grid.
+// Returns a list of voxels { x, y, z, part } in the piece's local grid (x, z in -6..6).
+// part: 'disk' | 'rim' | 'outline' | 'fill' | 'accent'.
 export function pieceVoxels(type) {
   const out = [];
-  const prof = PROFILES[type];
-  const top = prof.length - 1;
-  prof.forEach((r, y) => {
-    for (let x = -4; x <= 4; x++) {
-      for (let z = -4; z <= 4; z++) {
-        const d2 = x * x + z * z;
-        if (d2 > r * r) continue;
-        let accent = false;
-        if (type === 'R' && y >= top - 1) {
-          // Crenellated, hollow top.
-          if (d2 < 5) continue;
-          if (y === top && (x === 0 || z === 0 || Math.abs(x) === Math.abs(z))) continue;
-        }
-        if (type === 'B' && y >= 10 && y <= 15 && x === y - 12 && z >= 0) continue; // mitre slit
-        if (type === 'Q' && y >= 16 && y <= 18) {
-          if (d2 < 7) continue; // hollow crown
-          if (y > 16 && !((x + z + 8) % 2 === 0 && d2 >= 9)) continue; // spikes
-        }
-        if (type === 'Q' && y >= 19) accent = true;
-        if ((type === 'Q' || type === 'K') && y === 11) accent = true; // collar band
-        out.push({ x, y, z, accent });
-      }
+  for (let x = -6; x <= 6; x++) {
+    for (let z = -6; z <= 6; z++) {
+      const d2 = x * x + z * z;
+      if (d2 <= 6.4 * 6.4) out.push({ x, y: 0, z, part: d2 > 5.4 * 5.4 ? 'rim' : 'disk' });
+      if (d2 <= 6 * 6) out.push({ x, y: 1, z, part: d2 > 5 * 5 ? 'rim' : 'disk' });
     }
-  });
-  if (type === 'K') {
-    const y0 = prof.length;
-    for (let i = 0; i < 5; i++) out.push({ x: 0, y: y0 + i, z: 0, accent: true });
-    for (const x of [-2, -1, 1, 2]) out.push({ x, y: y0 + 3, z: 0, accent: true });
   }
-  if (type === 'N') {
-    KNIGHT_SIDE.forEach((row, i) => {
-      const y = prof.length + i;
-      for (let c = 0; c < 9; c++) {
-        if (row[c] !== '#') continue;
-        const z = c - 4;
-        const w = i < 4 ? 2 : 1;
-        for (let x = -w; x <= w; x++) {
-          const eye = i === 9 && z === 2 && Math.abs(x) === 1;
-          const mane = z <= -2 && x === 0 && i >= 4;
-          out.push({ x, y, z, accent: eye || mane });
-        }
-      }
-      if (i >= 4 && i <= 11) out.push({ x: 0, y, z: -4 + (row.indexOf('#') - 1), accent: true }); // mane ridge
-    });
+  const g = GLYPHS[type];
+  const filled = (r, c) => r >= 0 && r < 11 && c >= 0 && c < 11 && g[r][c] !== '.';
+  for (let r = 0; r < 11; r++) {
+    for (let c = 0; c < 11; c++) {
+      if (!filled(r, c)) continue;
+      const edge = !filled(r - 1, c) || !filled(r + 1, c) || !filled(r, c - 1) || !filled(r, c + 1);
+      const x = c - 5, z = r - 5;
+      const part = g[r][c] === 'o' ? 'accent' : edge ? 'outline' : 'fill';
+      // The outline is two voxels tall, the inside one higher: a raised, pillowy icon.
+      const h = edge ? 2 : 3;
+      for (let y = 2; y < 2 + h; y++) out.push({ x, y, z, part });
+    }
   }
   return dedupe(out);
 }
@@ -131,16 +164,17 @@ export function meshBoxes(boxes) {
 }
 
 export const PALETTE = {
-  w: { base: new THREE.Color('#e4d7b6'), accent: new THREE.Color('#c9a227') },
-  b: { base: new THREE.Color('#4a4558'), accent: new THREE.Color('#b8322a') },
+  w: { disk: '#d6c7a1', rim: '#6f5a3a', fill: '#fbf6e9', outline: '#2c2219', accent: '#c0392b' },
+  b: { disk: '#4a4557', rim: '#15131b', fill: '#2a2732', outline: '#e2c47c', accent: '#e2c47c' },
 };
+for (const c of Object.values(PALETTE)) for (const k in c) c[k] = new THREE.Color(c[k]);
 
 // Local voxel centers + colors for a piece. Used both for the solid mesh and for the shatter debris.
 export function pieceData(type, color) {
   const pal = PALETTE[color];
   return pieceVoxels(type).map((v) => {
-    const c = (v.accent ? pal.accent : pal.base).clone();
-    c.multiplyScalar(0.9 + hash(v.x, v.y, v.z) * 0.18);
+    const c = pal[v.part].clone();
+    c.multiplyScalar(0.92 + hash(v.x, v.y, v.z) * 0.14);
     return {
       grid: [v.x, v.y, v.z],
       key: `${v.x},${v.y},${v.z}`,

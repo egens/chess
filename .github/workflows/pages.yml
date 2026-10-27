@@ -32,6 +32,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/configure-pages@v5
         with:
           enablement: true
@@ -39,6 +41,9 @@ jobs:
         run: |
           mkdir _site
           cp -r index.html style.css js vendor _site/
+          # v1 (3D board with a free camera) stays playable at /v1/, frozen on the v1 branch.
+          mkdir _site/v1
+          git archive origin/v1 index.html style.css js vendor | tar -x -C _site/v1
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:

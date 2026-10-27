@@ -1,21 +1,13 @@
 // Move generator check against well-known perft node counts.
 import assert from 'node:assert/strict';
-import { Chess } from '../js/chess.js';
+import { Chess, toUci } from '../js/chess.js';
+import { burnLevels } from '../js/burn.js';
 import { think } from '../js/ai.js';
 
 function fromFen(fen) {
-  const [placement, turn, cast, ep] = fen.split(' ');
-  const board = new Array(64).fill(null);
-  placement.split('/').forEach((row, i) => {
-    let f = 0;
-    for (const ch of row) {
-      if (/\d/.test(ch)) f += +ch;
-      else board[(7 - i) * 8 + f++] = (ch === ch.toUpperCase() ? 'w' : 'b') + ch.toUpperCase();
-    }
-  });
-  const epSq = ep === '-' ? -1 : (+ep[1] - 1) * 8 + 'abcdefgh'.indexOf(ep[0]);
-  return new Chess({ board, turn, ep: epSq, halfmove: 0, fullmove: 1,
-    castling: { wK: cast.includes('K'), wQ: cast.includes('Q'), bK: cast.includes('k'), bQ: cast.includes('q') } });
+  const g = new Chess();
+  g.loadFen(fen);
+  return g;
 }
 
 function perft(g, d) {
@@ -48,4 +40,19 @@ assert.deepEqual([best.from, best.to], [39, 53]);
 // SAN.
 const s = new Chess();
 assert.equal(s.san(s.legalMoves().find((m) => m.from === 6 && m.to === 21)), 'Nf3');
+// UCI round trip, including lichess-style castling.
+const u = fromFen('r3k2r/8/8/8/8/8/8/R3K2R w KQkq -');
+assert.equal(toUci(u.moveFromUci('e1g1')), 'e1g1');
+assert.ok(u.moveFromUci('e1h1').castle);
+assert.equal(u.moveFromUci('e1e3'), null);
+const pr = fromFen('8/P6k/8/8/8/8/8/K7 w - -');
+assert.equal(pr.moveFromUci('a7a8n').promo, 'N');
+
+// Burn levels follow the capturing piece around the board.
+const bg = new Chess();
+for (const x of ['e2e4', 'd7d5', 'e4d5', 'd8d5', 'b1c3', 'd5a2', 'c3b5', 'a2a1']) {
+  bg.make(bg.moveFromUci(x));
+}
+const lv = burnLevels(bg.stack.map((s) => s.m));
+assert.deepEqual([...lv.entries()].sort(), [[0, 3]]); // black queen on a1 took d5, a2, a1
 console.log('all tests passed');

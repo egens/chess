@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <title>Воксельные шахматы</title>
+  <title>Воксельные шахматы v2</title>
   <meta name="description" content="Браузерные шахматы с воксельной графикой: фигуры разлетаются на кубики при взятии.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='5' y='1' width='6' height='3' fill='%23c9a227'/><rect x='6' y='4' width='4' height='7' fill='%23efe6cf'/><rect x='3' y='11' width='10' height='4' fill='%23efe6cf'/></svg>">
   <link rel="stylesheet" href="style.css">
   <script type="importmap">
-    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+    { "imports": { "three": "./vendor/three.module.min.js" } }
   </script>
 </head>
 <body>
@@ -26,9 +26,10 @@
           <option value="white">Я играю белыми</option>
           <option value="black">Я играю чёрными</option>
           <option value="pvp">Два игрока</option>
+          <option value="lichess">Онлайн через Lichess</option>
         </select>
       </label>
-      <label>Сила компьютера
+      <label class="local-only">Сила компьютера
         <select id="level">
           <option value="1">Новичок</option>
           <option value="2" selected>Любитель</option>
@@ -36,14 +37,46 @@
           <option value="4">Сильный</option>
         </select>
       </label>
+      <section id="online">
+        <div id="ol-login">
+          <button id="ol-signin" class="wide">Войти через Lichess</button>
+          <p class="hint">Нужен аккаунт lichess.org. Игра идёт через Board API, поэтому доступны партии от 10 минут.</p>
+        </div>
+        <div id="ol-lobby" hidden>
+          <div class="row"><span id="ol-me"></span><button id="ol-logout" class="small">Выйти</button></div>
+          <label>Контроль времени
+            <select id="ol-tc">
+              <option value="10+0">10+0 · рапид</option>
+              <option value="10+5" selected>10+5 · рапид</option>
+              <option value="15+10">15+10 · рапид</option>
+              <option value="30+0">30+0 · классика</option>
+              <option value="30+20">30+20 · классика</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="ol-rated"> Рейтинговая партия</label>
+          <button id="ol-seek" class="wide">Найти соперника</button>
+          <div class="row"><input id="ol-user" placeholder="Ник на lichess" autocomplete="off"><button id="ol-challenge">Вызвать</button></div>
+        </div>
+        <div id="ol-game" hidden>
+          <div class="player" id="ol-top"><span class="name"></span><span class="clock"></span></div>
+          <div class="player" id="ol-bottom"><span class="name"></span><span class="clock"></span></div>
+          <div class="buttons">
+            <button id="ol-draw">Предложить ничью</button>
+            <button id="ol-resign">Сдаться</button>
+          </div>
+          <button id="ol-leave" class="wide" hidden>В лобби</button>
+        </div>
+        <p id="ol-msg" class="hint"></p>
+      </section>
       <div class="buttons">
-        <button id="new">Новая игра</button>
-        <button id="undo">Отменить ход</button>
+        <button id="new" class="local-only">Новая игра</button>
+        <button id="undo" class="local-only">Отменить ход</button>
         <button id="flip">Повернуть доску</button>
         <button id="sound" title="Звук">🔊</button>
       </div>
       <ol id="moves"></ol>
-      <p class="hint">Клик — выбрать фигуру и ход. Перетаскивание — вращать камеру, колесо — масштаб.</p>
+      <p class="hint">Перетащите фигуру на нужную клетку или кликните по фигуре, затем по клетке. Фигура, взявшая чужую, загорается — и горит тем сильнее, чем больше взяла.</p>
+      <p class="hint"><a href="v1/">Версия v1</a> — 3D-доска со свободной камерой.</p>
     </div>
   </aside>
 
@@ -57,9 +90,20 @@
     </div>
   </div>
 
+  <div id="toast" hidden>
+    <p id="toast-text"></p>
+    <div class="buttons">
+      <button id="toast-yes">Принять</button>
+      <button id="toast-no">Отклонить</button>
+    </div>
+  </div>
+
   <div id="banner" hidden>
     <p id="banner-text"></p>
-    <button id="banner-new">Сыграть ещё</button>
+    <div class="buttons">
+      <button id="banner-new">Сыграть ещё</button>
+      <button id="banner-close">Посмотреть доску</button>
+    </div>
   </div>
 
   <noscript>Для игры нужен JavaScript и браузер с поддержкой WebGL.</noscript>

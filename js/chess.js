@@ -13,6 +13,10 @@ const ROOK_D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const BISHOP_D = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 const BACK_RANK = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
 
+export const parseSq = (s) => FILES.indexOf(s[0]) + (Number(s[1]) - 1) * 8;
+export const toUci = (m) => sqName(m.from) + sqName(m.to) + (m.promo ? m.promo.toLowerCase() : '');
+export const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
 const at = (f, r) => (f >= 0 && f < 8 && r >= 0 && r < 8 ? r * 8 + f : -1);
 
 export class Chess {
@@ -21,7 +25,11 @@ export class Chess {
     else this.reset();
   }
 
-  reset() {
+  reset(fen) {
+    if (fen && fen !== 'startpos' && fen !== START_FEN) {
+      this.loadFen(fen);
+      return;
+    }
     this.board = new Array(64).fill(null);
     for (let f = 0; f < 8; f++) {
       this.board[f] = 'w' + BACK_RANK[f];
@@ -55,6 +63,31 @@ export class Chess {
     this.fullmove = s.fullmove;
     this.stack = [];
     this.keys = [this.key()];
+  }
+
+  loadFen(fen) {
+    const [placement, turn, cast = '-', ep = '-', half = '0', full = '1'] = fen.trim().split(/\s+/);
+    const board = new Array(64).fill(null);
+    placement.split('/').forEach((row, i) => {
+      let f = 0;
+      for (const ch of row) {
+        if (/\d/.test(ch)) f += +ch;
+        else board[(7 - i) * 8 + f++] = (ch === ch.toUpperCase() ? 'w' : 'b') + ch.toUpperCase();
+      }
+    });
+    this.load({
+      board, turn, ep: ep === '-' ? -1 : parseSq(ep), halfmove: +half, fullmove: +full,
+      castling: { wK: cast.includes('K'), wQ: cast.includes('Q'), bK: cast.includes('k'), bQ: cast.includes('q') },
+    });
+  }
+
+  // Legal move for a UCI string; also accepts king-takes-rook castling notation.
+  moveFromUci(uci) {
+    const from = parseSq(uci.slice(0, 2)), to = parseSq(uci.slice(2, 4));
+    const promo = uci[4] ? uci[4].toUpperCase() : undefined;
+    const legal = this.legalMoves();
+    return legal.find((m) => m.from === from && m.to === to && m.promo === promo) ||
+      legal.find((m) => m.castle && m.from === from && m.castle.from === to) || null;
   }
 
   key() {
