@@ -3,7 +3,7 @@ import * as THREE from 'three';
 
 import { artGrid } from './art.js';
 
-const GRID = 26; // figurine resolution: GRID x GRID voxels per square
+const GRID = 44; // figurine resolution: GRID x GRID voxels per square
 export const VOXEL = 0.9 / GRID; // edge length of one piece voxel in world units (a board square is 1)
 
 let pieceArt = null;
@@ -51,7 +51,7 @@ export function pieceVoxels(type, color) {
       const cell = grid[r][c];
       if (!cell) continue;
       // Outline cells sit one step lower than the body next to them, so the drawing's lines read as grooves.
-      const h = 2 + Math.min(dist[r][c], 4) - (cell.dark && dist[r][c] > 0 ? 1 : 0);
+      const h = 3 + Math.min(dist[r][c], 7) - (cell.dark && dist[r][c] > 0 ? 2 : 0);
       for (let y = 0; y < h; y++) out.push({ x: c - half, y, z: r - half, color: cell });
     }
   }
@@ -121,13 +121,13 @@ export function pieceGeometry(type, color) {
   return cache.get(k);
 }
 
-// Board: no frame, every square is a 4x4 patch of slightly uneven voxel tiles in the classic
+// Board: no frame, every square is an 8x8 patch of slightly uneven voxel tiles in the classic
 // blue-and-white palette, lighter in the middle of the square and darker towards its edges.
 export function boardGeometry() {
   const boxes = [];
   const light = [new THREE.Color('#e4e9f0'), new THREE.Color('#bfc8d4')];
   const dark = [new THREE.Color('#729acb'), new THREE.Color('#4e73a3')];
-  const N = 4, s = 1 / N;
+  const N = 8, s = 1 / N;
   for (let gx = 0; gx < 8 * N; gx++) {
     for (let gz = 0; gz < 8 * N; gz++) {
       const h = hash(gx, 7, gz);

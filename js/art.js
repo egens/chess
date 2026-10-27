@@ -1,7 +1,7 @@
 // Classic 2D piece art (cburnett set, see assets/pieces/README.md), rasterized once at startup.
 // It is the source shape for the voxel figurines.
 const TYPES = ['P', 'N', 'B', 'R', 'Q', 'K'];
-const SIZE = 256;
+const SIZE = 352; // a multiple of the voxel grid (44) so every cell gets whole pixels
 
 // Black pieces are drawn dark grey with a black outline, like the reference look.
 function recolor(svg, color) {
