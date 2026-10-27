@@ -3,11 +3,12 @@
 import * as THREE from 'three';
 
 const MAX = 4000;
+// Colours are additive, so they are kept dim: the flames should flicker, not blind.
 const STOPS = [
-  [0, new THREE.Color(1, 0.95, 0.6)],
-  [0.25, new THREE.Color(1, 0.55, 0.1)],
-  [0.6, new THREE.Color(0.85, 0.15, 0.03)],
-  [1, new THREE.Color(0.1, 0.02, 0)],
+  [0, new THREE.Color(0.6, 0.5, 0.25)],
+  [0.25, new THREE.Color(0.6, 0.28, 0.05)],
+  [0.6, new THREE.Color(0.45, 0.08, 0.02)],
+  [1, new THREE.Color(0.05, 0.01, 0)],
 ];
 
 function glowTexture() {
@@ -56,7 +57,7 @@ export class Fire {
     for (const s of sources) {
       live.add(s.key);
       const level = Math.min(s.level, 6);
-      const rate = 30 + level * 20;
+      const rate = 22 + level * 14;
       let acc = (this.spawnAcc.get(s.key) || 0) + rate * dt;
       while (acc >= 1 && this.parts.length < MAX) {
         acc -= 1;
@@ -86,8 +87,8 @@ export class Fire {
       }
       const flick = 0.85 + Math.sin(t * 17 + s.pos.x * 3) * 0.08 + Math.sin(t * 29 + s.pos.z) * 0.07;
       glow.position.set(s.pos.x, 0.02, s.pos.z);
-      glow.scale.setScalar((1.3 + level * 0.18) * flick);
-      glow.material.opacity = Math.min(1, 0.45 + level * 0.1) * flick;
+      glow.scale.setScalar((1.2 + level * 0.12) * flick);
+      glow.material.opacity = Math.min(0.6, 0.2 + level * 0.05) * flick;
     }
     for (const [key, glow] of this.glows) {
       if (live.has(key)) continue;

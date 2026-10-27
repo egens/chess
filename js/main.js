@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { Chess, fileOf, rankOf, other, toUci } from './chess.js';
-import { pieceGeometry, boardGeometry, VOXEL } from './voxels.js';
+import { pieceGeometry, boardGeometry, setPieceArt, VOXEL } from './voxels.js';
+import { loadPieceArt } from './art.js';
 import { Sound } from './sound.js';
 import { Fire } from './fire.js';
 import { burnLevels } from './burn.js';
 import { Lichess } from './lichess.js';
+
+const pieceArt = await loadPieceArt();
+setPieceArt(pieceArt);
 
 // ---------- scene ----------
 const TABLE_Y = -0.35;
@@ -52,6 +56,94 @@ scene.add(table);
 
 const labels = addCoordinates();
 const fire = new Fire(scene);
+
+// ---------- themes ----------
+// 'voxel': wooden voxel board with voxel figurines; 'classic': flat blue board with 2D pieces.
+const THEMES = {
+  voxel: { background: '#1b1d26', table: '#23252f' },
+  classic: { background: '#1e1f22', table: '#1e1f22' },
+};
+let theme = THEMES[readPref('theme')] ? readPref('theme') : 'voxel';
+
+function readPref(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function writePref(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } }
+
+const classicCanvas = document.createElement('canvas');
+classicCanvas.width = classicCanvas.height = 1024;
+const classicTexture = new THREE.CanvasTexture(classicCanvas);
+classicTexture.colorSpace = THREE.SRGBColorSpace;
+classicTexture.anisotropy = 4;
+const classicBoard = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshBasicMaterial({ map: classicTexture }));
+classicBoard.rotation.x = -Math.PI / 2;
+classicBoard.position.y = 0.001;
+scene.add(classicBoard);
+
+// Blue board with soft, slightly shaded squares and coordinates tucked into the corners.
+function drawClassicBoard(view) {
+  const x = classicCanvas.getContext('2d'), S = 128;
+  for (let f = 0; f < 8; f++) {
+    for (let r = 0; r < 8; r++) {
+      const light = (f + r) & 1;
+      const px = f * S, py = (7 - r) * S; // canvas top is rank 8, left is file a
+      const g = x.createRadialGradient(px + S / 2, py + S / 2, S * 0.1, px + S / 2, py + S / 2, S * 0.75);
+      g.addColorStop(0, light ? '#e3e8ef' : '#6f97c8');
+      g.addColorStop(1, light ? '#c1c9d5' : '#4f74a4');
+      x.fillStyle = g;
+      x.fillRect(px, py, S, S);
+    }
+  }
+  x.font = 'bold 22px system-ui, sans-serif';
+  const label = (text, sq, corner) => {
+    const f = sq & 7, r = sq >> 3;
+    const light = (f + r) & 1;
+    x.fillStyle = light ? '#5476a6' : '#dfe6ee';
+    x.save();
+    x.translate(f * S + S / 2, (7 - r) * S + S / 2);
+    if (view === 'b') x.rotate(Math.PI); // keep the text upright for the player with Black
+    x.textAlign = corner === 'tr' ? 'right' : 'left';
+    x.textBaseline = corner === 'tr' ? 'top' : 'bottom';
+    x.fillText(text, corner === 'tr' ? S / 2 - 8 : -S / 2 + 8, corner === 'tr' ? -S / 2 + 6 : S / 2 - 4);
+    x.restore();
+  };
+  // Ranks on the viewer's right-hand file, files along the viewer's bottom rank.
+  for (let i = 0; i < 8; i++) {
+    if (view === 'w') {
+      label(String(i + 1), i * 8 + 7, 'tr');
+      label('abcdefgh'[i], i, 'bl');
+    } else {
+      label(String(i + 1), i * 8, 'tr');
+      label('abcdefgh'[i], 56 + i, 'bl');
+    }
+  }
+  classicTexture.needsUpdate = true;
+}
+
+const classicMaterials = new Map();
+function classicMaterial(p) {
+  if (!classicMaterials.has(p)) {
+    const tex = new THREE.CanvasTexture(pieceArt.get(p));
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    classicMaterials.set(p, new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.02, depthWrite: false }));
+  }
+  return classicMaterials.get(p);
+}
+const classicPieceGeo = new THREE.PlaneGeometry(1, 1);
+const isSharedMaterial = (m) => m === voxelMaterial || [...classicMaterials.values()].includes(m);
+
+function applyTheme() {
+  const t = THEMES[theme];
+  scene.background.set(t.background);
+  table.material.color.set(t.table);
+  const voxel = theme === 'voxel';
+  board.visible = voxel;
+  for (const l of labels) l.visible = voxel;
+  classicBoard.visible = !voxel;
+  if (!voxel) drawClassicBoard(viewFrom);
+  syncPieces();
+  refreshMarkers();
+  placeCamera();
+}
 
 const sqPos = (sq) => new THREE.Vector3(fileOf(sq) - 3.5, 0, 3.5 - rankOf(sq));
 
@@ -120,7 +212,7 @@ let hoverSq = -1;
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  status: $('status'), moves: $('moves'), mode: $('mode'), level: $('level'),
+  status: $('status'), moves: $('moves'), mode: $('mode'), level: $('level'), theme: $('theme'),
   promo: $('promo'), banner: $('banner'), bannerText: $('banner-text'),
 };
 
@@ -148,29 +240,47 @@ function isHumanTurn() {
   return h === null || h === game.turn;
 }
 
+// A piece is a group (positioned on the board, turned to face the viewer) holding its body:
+// a voxel figurine or a flat picture, depending on the theme.
 function makePieceMesh(p) {
-  const { geometry } = pieceGeometry(p[1], p[0]);
-  const mesh = new THREE.Mesh(geometry, voxelMaterial);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.userData.piece = p;
-  mesh.userData.burn = 0;
-  mesh.rotation.y = viewFrom === 'w' ? 0 : Math.PI; // glyphs stay upright for the viewer
-  return mesh;
+  let body;
+  if (theme === 'classic') {
+    body = new THREE.Mesh(classicPieceGeo, classicMaterial(p));
+    body.rotation.x = -Math.PI / 2;
+    body.position.y = 0.01;
+    body.renderOrder = 1;
+  } else {
+    body = new THREE.Mesh(pieceGeometry(p[1], p[0]).geometry, voxelMaterial);
+    body.castShadow = true;
+    body.receiveShadow = true;
+  }
+  const obj = new THREE.Group();
+  obj.add(body);
+  obj.userData.body = body;
+  obj.userData.piece = p;
+  obj.userData.burn = 0;
+  obj.rotation.y = viewFrom === 'w' ? 0 : Math.PI; // pieces stay upright for the viewer
+  return obj;
 }
 
-function setBurn(mesh, level) {
-  mesh.userData.burn = level;
-  if (level > 0 && mesh.material === voxelMaterial) {
-    mesh.material = voxelMaterial.clone();
-    mesh.material.emissive = new THREE.Color('#ff5a14');
+function disposePiece(obj) {
+  const m = obj.userData.body.material;
+  if (!isSharedMaterial(m)) m.dispose();
+}
+
+function setBurn(obj, level) {
+  obj.userData.burn = level;
+  const body = obj.userData.body;
+  if (level > 0 && isSharedMaterial(body.material)) {
+    body.material = body.material.clone();
+    if (body.material.emissive) body.material.emissive = new THREE.Color('#ff5a14');
   }
 }
 
 function syncPieces() {
   for (const m of pieces.values()) {
     scene.remove(m);
-    if (m.material !== voxelMaterial) m.material.dispose();
+    disposePiece(m);
   }
   pieces.clear();
   const burns = burnLevels(game.stack.map((u) => u.m));
@@ -294,6 +404,7 @@ async function playMove(m, { dragged = false } = {}) {
 
   if (m.promo) {
     scene.remove(mesh);
+    disposePiece(mesh);
     const q = makePieceMesh(game.board[m.to]);
     q.position.copy(sqPos(m.to));
     q.userData.sq = m.to;
@@ -370,7 +481,7 @@ const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THRE
 
 function shatter(victim, dir, attackerType) {
   scene.remove(victim);
-  if (victim.material !== voxelMaterial) victim.material.dispose();
+  disposePiece(victim);
   const p = victim.userData.piece;
   const { voxels } = pieceGeometry(p[1], p[0]);
   const inst = new THREE.InstancedMesh(boxGeo, debrisMaterial, voxels.length);
@@ -666,6 +777,7 @@ function setView(color) {
   viewFrom = color;
   for (const mesh of pieces.values()) mesh.rotation.y = color === 'w' ? 0 : Math.PI;
   for (const l of labels) l.rotation.z = color === 'w' ? 0 : Math.PI;
+  if (theme === 'classic') drawClassicBoard(color);
   fire.wind.set(0, 0, color === 'w' ? -0.18 : 0.18); // flames lean towards the top of the screen
   placeCamera();
 }
@@ -679,7 +791,7 @@ function placeCamera() {
   else if (W < H) top = panel.bottom;
   const pad = 12;
   const aw = W - left - pad * 2, ah = H - top - pad * 2;
-  const SIZE = 9.6;
+  const SIZE = theme === 'classic' ? 8.3 : 9.6; // the classic board has no frame
   const wpp = Math.max(SIZE / aw, SIZE / ah); // world units per pixel at board level
   const dist = (H * wpp) / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const cx = left + pad + aw / 2 - W / 2, cy = top + pad + ah / 2 - H / 2;
@@ -1080,7 +1192,10 @@ renderer.setAnimationLoop(() => {
     const burn = mesh.userData.burn;
     if (burn > 0 && mesh.parent) {
       sources.push({ key: mesh.uuid, pos: mesh.position, level: burn });
-      mesh.material.emissiveIntensity = (0.05 + Math.min(burn, 6) * 0.03) * (0.8 + Math.sin(t * 13 + sq) * 0.2);
+      const glow = (0.6 + Math.min(burn, 6) * 0.1) * (0.8 + Math.sin(t * 13 + sq) * 0.2);
+      const mat = mesh.userData.body.material;
+      if (mat.emissive) mat.emissiveIntensity = glow * 0.06;
+      else mat.color.setRGB(1, 1 - glow * 0.12, 1 - glow * 0.22); // warm tint on flat pieces
     }
   }
   fire.update(dt, t, sources);
@@ -1091,8 +1206,15 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
 });
 
+ui.theme.value = theme;
+ui.theme.addEventListener('change', () => {
+  theme = ui.theme.value;
+  writePref('theme', theme);
+  applyTheme();
+});
 resetBoard();
 setView('w');
+applyTheme();
 updateStatus();
 
 // Coming back from the lichess login page.

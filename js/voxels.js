@@ -1,91 +1,12 @@
 // Voxel models for the pieces and a face-culling mesher that turns them into BufferGeometry.
 import * as THREE from 'three';
 
-export const VOXEL = 0.065; // edge length of one piece voxel in world units (a board square is 1)
+import { artGrid } from './art.js';
 
-// v2 pieces are made to be read from straight above: a round token with the classic chess
-// silhouette standing out in relief. Rows go from the far edge of the token (screen top) down,
-// columns left to right, 11x11. 'o' marks an accent voxel (the knight's eye).
-const GLYPHS = {
-  P: [
-    '...........',
-    '....###....',
-    '...#####...',
-    '...#####...',
-    '....###....',
-    '...#####...',
-    '....###....',
-    '....###....',
-    '...#####...',
-    '..#######..',
-    '..#######..',
-  ],
-  R: [
-    '...........',
-    '.##..#..##.',
-    '.#########.',
-    '..#######..',
-    '...#####...',
-    '...#####...',
-    '...#####...',
-    '...#####...',
-    '..#######..',
-    '.#########.',
-    '.#########.',
-  ],
-  N: [
-    '....#.#....',
-    '...#####...',
-    '..#######..',
-    '.##o######.',
-    '.#########.',
-    '.###..####.',
-    '......####.',
-    '.....#####.',
-    '....######.',
-    '..########.',
-    '.#########.',
-  ],
-  B: [
-    '.....#.....',
-    '....###....',
-    '...###.#...',
-    '...##.##...',
-    '...#####...',
-    '....###....',
-    '...#####...',
-    '....###....',
-    '....###....',
-    '..#######..',
-    '.#########.',
-  ],
-  Q: [
-    '#....#....#',
-    '.#..###..#.',
-    '.##.###.##.',
-    '.#########.',
-    '..#######..',
-    '...#####...',
-    '....###....',
-    '...#####...',
-    '....###....',
-    '..#######..',
-    '.#########.',
-  ],
-  K: [
-    '.....#.....',
-    '....###....',
-    '.....#.....',
-    '..##.#.##..',
-    '.#########.',
-    '.#########.',
-    '..#######..',
-    '...#####...',
-    '....###....',
-    '..#######..',
-    '.#########.',
-  ],
-};
+const GRID = 26; // figurine resolution: GRID x GRID voxels per square
+export const VOXEL = 0.9 / GRID; // edge length of one piece voxel in world units (a board square is 1)
+
+let pieceArt = null;
 
 function hash(x, y, z) {
   let h = (x * 374761393 + y * 668265263 + z * 2147483647) | 0;
@@ -93,37 +14,48 @@ function hash(x, y, z) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
 }
 
-// Returns a list of voxels { x, y, z, part } in the piece's local grid (x, z in -6..6).
-// part: 'disk' | 'rim' | 'outline' | 'fill' | 'accent'.
-export function pieceVoxels(type) {
-  const out = [];
-  for (let x = -6; x <= 6; x++) {
-    for (let z = -6; z <= 6; z++) {
-      const d2 = x * x + z * z;
-      if (d2 <= 6.4 * 6.4) out.push({ x, y: 0, z, part: d2 > 5.4 * 5.4 ? 'rim' : 'disk' });
-      if (d2 <= 6 * 6) out.push({ x, y: 1, z, part: d2 > 5 * 5 ? 'rim' : 'disk' });
-    }
-  }
-  const g = GLYPHS[type];
-  const filled = (r, c) => r >= 0 && r < 11 && c >= 0 && c < 11 && g[r][c] !== '.';
-  for (let r = 0; r < 11; r++) {
-    for (let c = 0; c < 11; c++) {
-      if (!filled(r, c)) continue;
-      const edge = !filled(r - 1, c) || !filled(r + 1, c) || !filled(r, c - 1) || !filled(r, c + 1);
-      const x = c - 5, z = r - 5;
-      const part = g[r][c] === 'o' ? 'accent' : edge ? 'outline' : 'fill';
-      // The outline is two voxels tall, the inside one higher: a raised, pillowy icon.
-      const h = edge ? 2 : 3;
-      for (let y = 2; y < 2 + h; y++) out.push({ x, y, z, part });
-    }
-  }
-  return dedupe(out);
-}
+export function setPieceArt(art) { pieceArt = art; }
 
-function dedupe(list) {
-  const seen = new Map();
-  for (const v of list) seen.set(`${v.x},${v.y},${v.z}`, v);
-  return [...seen.values()];
+// Voxel figurine built from the classic 2D piece art: the silhouette is extruded and domed,
+// so it reads like the drawing from above and has real relief for light and shadow.
+// Returns [{ x, y, z, color }] in the local grid (x, z centered on the square, y up).
+export function pieceVoxels(type, color) {
+  const grid = artGrid(pieceArt.get(color + type), GRID);
+  const filled = (r, c) => r >= 0 && r < GRID && c >= 0 && c < GRID && grid[r][c];
+  // Distance from the silhouette edge (in cells), used to dome the figurine.
+  const dist = grid.map((line) => line.map(() => Infinity));
+  const queue = [];
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      if (!filled(r, c)) continue;
+      if (!filled(r - 1, c) || !filled(r + 1, c) || !filled(r, c - 1) || !filled(r, c + 1)) {
+        dist[r][c] = 0;
+        queue.push([r, c]);
+      }
+    }
+  }
+  for (let i = 0; i < queue.length; i++) {
+    const [r, c] = queue[i];
+    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nr = r + dr, nc = c + dc;
+      if (filled(nr, nc) && dist[nr][nc] > dist[r][c] + 1) {
+        dist[nr][nc] = dist[r][c] + 1;
+        queue.push([nr, nc]);
+      }
+    }
+  }
+  const out = [];
+  const half = (GRID - 1) / 2;
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const cell = grid[r][c];
+      if (!cell) continue;
+      // Outline cells sit one step lower than the body next to them, so the drawing's lines read as grooves.
+      const h = 2 + Math.min(dist[r][c], 4) - (cell.dark && dist[r][c] > 0 ? 1 : 0);
+      for (let y = 0; y < h; y++) out.push({ x: c - half, y, z: r - half, color: cell });
+    }
+  }
+  return out;
 }
 
 const FACES = [
@@ -163,18 +95,12 @@ export function meshBoxes(boxes) {
   return g;
 }
 
-export const PALETTE = {
-  w: { disk: '#d6c7a1', rim: '#6f5a3a', fill: '#fbf6e9', outline: '#2c2219', accent: '#c0392b' },
-  b: { disk: '#4a4557', rim: '#15131b', fill: '#2a2732', outline: '#e2c47c', accent: '#e2c47c' },
-};
-for (const c of Object.values(PALETTE)) for (const k in c) c[k] = new THREE.Color(c[k]);
-
 // Local voxel centers + colors for a piece. Used both for the solid mesh and for the shatter debris.
 export function pieceData(type, color) {
-  const pal = PALETTE[color];
-  return pieceVoxels(type).map((v) => {
-    const c = pal[v.part].clone();
-    c.multiplyScalar(0.92 + hash(v.x, v.y, v.z) * 0.14);
+  return pieceVoxels(type, color).map((v) => {
+    const c = new THREE.Color(v.color.r, v.color.g, v.color.b);
+    c.convertSRGBToLinear();
+    c.multiplyScalar(0.94 + hash(v.x * 2, v.y, v.z * 2) * 0.1);
     return {
       grid: [v.x, v.y, v.z],
       key: `${v.x},${v.y},${v.z}`,
@@ -188,7 +114,10 @@ export function pieceData(type, color) {
 const cache = new Map();
 export function pieceGeometry(type, color) {
   const k = type + color;
-  if (!cache.has(k)) cache.set(k, { geometry: meshBoxes(pieceData(type, color)), voxels: pieceData(type, color) });
+  if (!cache.has(k)) {
+    const voxels = pieceData(type, color);
+    cache.set(k, { geometry: meshBoxes(voxels), voxels });
+  }
   return cache.get(k);
 }
 

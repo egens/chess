@@ -40,7 +40,7 @@ jobs:
       - name: Collect site files
         run: |
           mkdir _site
-          cp -r index.html style.css js vendor _site/
+          cp -r index.html style.css js vendor assets _site/
           # v1 (3D board with a free camera) stays playable at /v1/, frozen on the v1 branch.
           mkdir _site/v1
           git archive origin/v1 index.html style.css js vendor | tar -x -C _site/v1
