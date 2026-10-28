@@ -14,7 +14,10 @@ function hash(x, y, z) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
 }
 
-export function setPieceArt(art) { pieceArt = art; }
+export function setPieceArt(art) {
+  pieceArt = art;
+  cache.clear();
+}
 
 // Voxel figurine built from the classic 2D piece art: the silhouette is extruded and domed,
 // so it reads like the drawing from above and has real relief for light and shadow.

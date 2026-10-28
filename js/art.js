@@ -1,11 +1,15 @@
-// Classic 2D piece art (cburnett set, see assets/pieces/README.md), rasterized once at startup.
+// 2D piece art (see assets/pieces/README.md), rasterized once per piece set.
 // It is the source shape for the voxel figurines.
 const TYPES = ['P', 'N', 'B', 'R', 'Q', 'K'];
 const SIZE = 352; // a multiple of the voxel grid (44) so every cell gets whole pixels
 
-// Black pieces are drawn dark grey with a black outline, like the reference look.
-function recolor(svg, color) {
-  if (color === 'w') return svg;
+export const PIECE_SETS = { cburnett: 'Классические', staunty: 'Staunty' };
+
+// cburnett's black pieces are drawn dark grey with a black outline, like the reference look;
+// staunty already comes in those colours. Sizes are made explicit so every SVG rasterizes alike.
+function prepare(svg, set, color) {
+  if (!/<svg[^>]*\swidth=/.test(svg)) svg = svg.replace('<svg ', '<svg width="50" height="50" ');
+  if (set !== 'cburnett' || color === 'w') return svg;
   return svg
     .replace('<svg ', '<svg fill="#585858" ')
     .replaceAll('fill="#000"', 'fill="#585858"')
@@ -28,11 +32,11 @@ async function rasterize(svg) {
 }
 
 // Map 'wK' -> canvas (SIZE x SIZE, transparent background).
-export async function loadPieceArt(base = 'assets/pieces/') {
+export async function loadPieceArt(set = 'cburnett') {
   const art = new Map();
   await Promise.all(['w', 'b'].flatMap((c) => TYPES.map(async (t) => {
-    const svg = await (await fetch(`${base}${c}${t}.svg`)).text();
-    art.set(c + t, await rasterize(recolor(svg, c)));
+    const svg = await (await fetch(`assets/pieces/${set}/${c}${t}.svg`)).text();
+    art.set(c + t, await rasterize(prepare(svg, set, c)));
   })));
   return art;
 }
@@ -56,7 +60,7 @@ export function artGrid(canvas, n) {
           opaque++;
           const r = px[i], g = px[i + 1], b = px[i + 2];
           const luma = 0.3 * r + 0.59 * g + 0.11 * b;
-          const t = tones[luma < 50 ? 0 : luma < 190 ? 1 : 2];
+          const t = tones[luma < 70 ? 0 : luma < 190 ? 1 : 2];
           t[0]++; t[1] += r; t[2] += g; t[3] += b;
         }
       }

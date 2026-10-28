@@ -93,3 +93,23 @@ button.small { padding: 3px 9px; font-size: 12px; }
 }
 #toast[hidden] { display: none; }
 #toast p { margin: 0 0 10px; font-weight: 600; }
+
+.row .grow { flex: 1; }
+.history { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.history button { padding: 4px 0; font-size: 13px; }
+#moves li span[data-ply] { cursor: pointer; border-radius: 2px; padding: 0 3px; }
+#moves li span[data-ply]:hover { background: rgba(255, 255, 255, 0.08); }
+#moves li span.cur { background: rgba(201, 162, 39, 0.35); }
+
+.tbar {
+  position: fixed; z-index: 1; overflow: hidden; border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08); pointer-events: none;
+}
+.tbar[hidden] { display: none; }
+.tbar .fill { position: absolute; inset: 0 auto 0 0; background: #5d7fae; transition: width 0.1s linear; }
+.tbar.running .fill { background: #7fa6d9; }
+.tbar.low .fill { background: #c0453a; }
+.tbar .time {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  font: 700 12px ui-monospace, monospace; color: #f2f4f8; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}

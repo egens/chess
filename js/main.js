@@ -1,14 +1,18 @@
 import * as THREE from 'three';
 import { Chess, fileOf, rankOf, other, toUci } from './chess.js';
 import { pieceGeometry, boardGeometry, setPieceArt, VOXEL } from './voxels.js';
-import { loadPieceArt } from './art.js';
+import { loadPieceArt, PIECE_SETS } from './art.js';
 import { Sound } from './sound.js';
 import { Fire } from './fire.js';
 import { burnLevels } from './burn.js';
 import { Lichess } from './lichess.js';
 
-const pieceArt = await loadPieceArt();
-setPieceArt(pieceArt);
+function readPref(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function writePref(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } }
+
+let pieceSet = PIECE_SETS[readPref('pieces')] ? readPref('pieces') : 'cburnett';
+let fireOn = readPref('fire') !== 'off';
+setPieceArt(await loadPieceArt(pieceSet));
 
 // ---------- scene ----------
 const TABLE_Y = -0.35;
@@ -69,6 +73,7 @@ const mat = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent
 const M = {
   last: mat('#f5d76e', 0.32), select: mat('#7fd6ff', 0.5), move: mat('#7fd6ff', 0.85),
   capture: mat('#ff6b5a', 0.9), check: mat('#ff3b30', 0.95), hover: mat('#ffffff', 0.3),
+  premove: mat('#8b6fd6', 0.5), premoveDot: mat('#8b6fd6', 0.85),
 };
 
 function ringGeometry() {
@@ -121,11 +126,17 @@ let aiRequest = 0;
 let generation = 0; // bumped whenever the position is rebuilt, so stale animations stop early
 let viewFrom = 'w';
 let hoverSq = -1;
+let startFen; // position the current game started from
+let viewPly = null; // null: live position; a number: browsing history at that many plies
+let historyGame = null; // the position being browsed
+let premove = null; // { from, to }: one queued move for when it becomes our turn
 
 const $ = (id) => document.getElementById(id);
 const ui = {
   status: $('status'), moves: $('moves'), mode: $('mode'), level: $('level'),
   promo: $('promo'), banner: $('banner'), bannerText: $('banner-text'),
+  pieces: $('pieces'), fire: $('fire'), clock: $('clock'),
+  barTop: $('bar-top'), barBottom: $('bar-bottom'),
 };
 
 const LEVELS = { 1: [1, 300], 2: [2, 600], 3: [3, 1200], 4: [5, 2500] };
@@ -180,14 +191,15 @@ function setBurn(obj, level) {
   }
 }
 
-function syncPieces() {
+// Rebuild the piece meshes for a position: the live game, or a browsed one from history.
+function syncPieces(pos = game) {
   for (const m of pieces.values()) {
     scene.remove(m);
     disposePiece(m);
   }
   pieces.clear();
-  const burns = burnLevels(game.stack.map((u) => u.m));
-  game.board.forEach((p, sq) => {
+  const burns = burnLevels(pos.stack.map((u) => u.m));
+  pos.board.forEach((p, sq) => {
     if (!p) return;
     const mesh = makePieceMesh(p);
     mesh.position.copy(sqPos(sq));
@@ -200,18 +212,26 @@ function syncPieces() {
 
 function refreshMarkers() {
   markers.clear();
-  if (lastMove) {
-    addMarker(tileGeo, M.last, lastMove.from);
-    addMarker(tileGeo, M.last, lastMove.to);
+  const pos = historyGame || game;
+  const top = pos.stack[pos.stack.length - 1];
+  const last = historyGame ? top && top.m : lastMove;
+  if (last) {
+    addMarker(tileGeo, M.last, last.from);
+    addMarker(tileGeo, M.last, last.to);
   }
-  if (game.inCheck()) addMarker(ringGeo, M.check, game.kingSquare(game.turn), 0.0);
+  if (pos.inCheck()) addMarker(ringGeo, M.check, pos.kingSquare(pos.turn), 0.0);
+  if (premove && !historyGame) {
+    addMarker(tileGeo, M.premove, premove.from, 0.015);
+    addMarker(tileGeo, M.premove, premove.to, 0.015);
+  }
   if (selected >= 0) {
     addMarker(tileGeo, M.select, selected, 0.014);
     const seen = new Set();
     for (const m of legalForSelected) {
       if (seen.has(m.to)) continue;
       seen.add(m.to);
-      if (m.captured) addMarker(ringGeo, M.capture, m.to, 0.0);
+      if (m.premove) addMarker(dotGeo, M.premoveDot, m.to, 0.12).userData.bob = true;
+      else if (m.captured) addMarker(ringGeo, M.capture, m.to, 0.0);
       else addMarker(dotGeo, M.move, m.to, 0.12).userData.bob = true;
     }
   }
@@ -253,24 +273,42 @@ function updateStatus() {
     else s = `Ход: ${NAMES[game.turn]}`;
     if (game.inCheck() && (!isOnline() || online.gameId)) s += ' — шах!';
     if (!isOnline() && !isHumanTurn()) s += ' (думает…)';
+    if (premove) s += ' · премув';
     ui.status.textContent = s;
     ui.banner.hidden = true;
     ui.bannerText.textContent = '';
   }
+  if (viewPly !== null) ui.status.textContent = `Просмотр: ход ${viewPly} из ${sanList.length}`;
+  renderMoveList();
+  renderOnline();
+}
+
+function renderMoveList() {
+  const current = viewPly === null ? sanList.length : viewPly;
   ui.moves.innerHTML = '';
   for (let i = 0; i < sanList.length; i += 2) {
     const li = document.createElement('li');
-    li.innerHTML = `<span>${sanList[i]}</span><span>${sanList[i + 1] || ''}</span>`;
+    for (const k of [i, i + 1]) {
+      const span = document.createElement('span');
+      if (k < sanList.length) {
+        span.textContent = sanList[k];
+        span.dataset.ply = k + 1;
+        span.classList.toggle('cur', k + 1 === current);
+      }
+      li.appendChild(span);
+    }
     ui.moves.appendChild(li);
   }
-  ui.moves.scrollTop = ui.moves.scrollHeight;
-  renderOnline();
+  const cur = ui.moves.querySelector('.cur');
+  if (viewPly === null || !cur) ui.moves.scrollTop = ui.moves.scrollHeight;
+  else cur.scrollIntoView({ block: 'nearest' });
 }
 
 // ---------- moves ----------
 // dragged: the piece was already carried to the target square by the player.
 async function playMove(m, { dragged = false } = {}) {
   const gen = generation;
+  if (viewPly !== null) exitHistory();
   busy = true;
   selected = -1;
   legalForSelected = [];
@@ -283,6 +321,7 @@ async function playMove(m, { dragged = false } = {}) {
   if (victim) pieces.delete(capSq);
   pieces.set(m.to, mesh);
   mesh.userData.sq = m.to;
+  if (!isOnline()) clockMoved(m.piece[0]);
   game.make(m);
   lastMove = m;
   refreshMarkers();
@@ -318,15 +357,22 @@ async function playMove(m, { dragged = false } = {}) {
     sound.promote();
   }
 
-  if (!isOnline()) {
+  if (!isOnline() && !gameOver) {
     const st = game.status();
-    gameOver = st.over ? st : null;
+    if (st.over) endGame(st);
   }
   if (game.inCheck() && !gameOver) sound.check();
   refreshMarkers();
   updateStatus();
   busy = false;
   maybeAI();
+  tryPremove();
+}
+
+function endGame(st) {
+  gameOver = st;
+  premove = null;
+  clockStop();
 }
 
 function animateMove(mesh, from, to, jump, onImpact) {
@@ -518,6 +564,91 @@ let drag = null; // { sq, mesh }
 
 const canInteract = () => !busy && !gameOver && !pendingPromotion && isHumanTurn();
 
+// Premoves: while the opponent is to move, one move can be queued, as on lichess.
+function canPremove() {
+  const h = humanColor();
+  if (h === null || gameOver || pendingPromotion || game.turn === h) return false;
+  return !isOnline() || (!!online.gameId && !online.finished);
+}
+const inputMode = () => (canInteract() ? 'move' : canPremove() ? 'premove' : null);
+const ownColor = (mode) => (mode === 'move' ? game.turn : humanColor());
+
+// Squares a piece could reach on the next turn whatever the opponent does: sliders ignore
+// blockers, pawns may always try to capture diagonally, the king may try to castle.
+function premoveDests(sq) {
+  const p = game.board[sq];
+  if (!p) return [];
+  const c = p[0], f = fileOf(sq), r = rankOf(sq), out = [];
+  const add = (df, dr) => {
+    const nf = f + df, nr = r + dr;
+    if (nf >= 0 && nf < 8 && nr >= 0 && nr < 8) out.push({ from: sq, to: nr * 8 + nf, premove: true });
+  };
+  const ray = (df, dr) => { for (let k = 1; k < 8; k++) add(df * k, dr * k); };
+  const t = p[1];
+  if (t === 'P') {
+    const dir = c === 'w' ? 1 : -1;
+    add(0, dir);
+    if (r === (c === 'w' ? 1 : 6)) add(0, 2 * dir);
+    add(-1, dir);
+    add(1, dir);
+  } else if (t === 'N') {
+    for (const [df, dr] of [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]) add(df, dr);
+  } else if (t === 'K') {
+    for (let df = -1; df <= 1; df++) for (let dr = -1; dr <= 1; dr++) if (df || dr) add(df, dr);
+    if (sq === (c === 'w' ? 4 : 60)) { add(2, 0); add(-2, 0); }
+  } else {
+    if (t !== 'B') for (const [df, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) ray(df, dr);
+    if (t !== 'R') for (const [df, dr] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) ray(df, dr);
+  }
+  return out.filter((m) => !(game.board[m.to] && game.board[m.to][0] === c && game.board[m.to][1] !== 'R'));
+}
+
+function setPremove(from, to) {
+  premove = { from, to };
+  selectSquare(-1);
+  sound.select();
+  refreshMarkers();
+  updateStatus();
+}
+
+function cancelPremove() {
+  if (!premove) return;
+  premove = null;
+  refreshMarkers();
+  updateStatus();
+}
+
+// Play the queued premove as soon as it is our turn, if it is legal now (promotes to a queen).
+function tryPremove() {
+  if (!premove || !canInteract()) return;
+  const pm = premove;
+  premove = null;
+  const cands = game.legalMoves().filter((m) => m.from === pm.from && (m.to === pm.to || (m.castle && m.castle.from === pm.to)));
+  const m = cands.find((x) => x.promo === 'Q') || cands[0];
+  if (m) humanMove(m);
+  else {
+    refreshMarkers();
+    updateStatus();
+  }
+}
+
+// Try to act on a click or drop from square `from` to `to`; returns true if it did something.
+function moveOrPremove(from, to, opts) {
+  const mode = inputMode();
+  if (mode === 'move') {
+    const moves = game.legalMoves().filter((m) => m.from === from && m.to === to);
+    if (!moves.length) return false;
+    if (moves.length > 1) askPromotion(moves, opts);
+    else humanMove(moves[0], opts);
+    return true;
+  }
+  if (mode === 'premove' && premoveDests(from).some((m) => m.to === to)) {
+    setPremove(from, to);
+    return true;
+  }
+  return false;
+}
+
 function setRay(e) {
   const r = canvas.getBoundingClientRect();
   pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -532,9 +663,11 @@ function groundSquare(e) {
   return f >= 0 && f < 8 && rk >= 0 && rk < 8 ? rk * 8 + f : -1;
 }
 
-function selectSquare(sq) {
+function selectSquare(sq, mode = 'move') {
   selected = sq;
-  legalForSelected = sq >= 0 ? game.legalMoves().filter((m) => m.from === sq) : [];
+  if (sq < 0) legalForSelected = [];
+  else if (mode === 'premove') legalForSelected = premoveDests(sq);
+  else legalForSelected = game.legalMoves().filter((m) => m.from === sq);
 }
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -548,10 +681,13 @@ canvas.addEventListener('pointermove', (e) => {
   if (!press || e.pointerId !== press.id) return;
   if (!drag) {
     if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < 6) return;
+    if (viewPly !== null) return;
     const p = game.board[press.sq];
-    if (!canInteract() || !p || p[0] !== game.turn) return;
+    const mode = inputMode();
+    if (!mode || !p || p[0] !== ownColor(mode) || !pieces.get(press.sq)) return;
+    if (mode === 'premove') cancelPremove();
     drag = { sq: press.sq, mesh: pieces.get(press.sq) };
-    selectSquare(press.sq);
+    selectSquare(press.sq, mode);
     sound.select();
   }
   setRay(e);
@@ -576,18 +712,16 @@ function endPress(e, cancelled) {
     drag = null;
     hoverSq = -1;
     const target = cancelled ? -1 : groundSquare(e);
-    const moves = legalForSelected.filter((m) => m.to === target);
-    if (moves.length && canInteract()) {
-      if (moves.length > 1) askPromotion(moves, { dragged: true });
-      else humanMove(moves[0], { dragged: true });
-    } else {
-      // Not a legal drop: fly back home and keep it selected.
-      const home = sqPos(d.sq);
-      const from = d.mesh.position.clone();
-      d.mesh.scale.setScalar(1);
-      tween(0.18, (t) => d.mesh.position.lerpVectors(from, home, t));
-      refreshMarkers();
-    }
+    const isMove = inputMode() === 'move';
+    // A real move keeps the piece where it was dropped; a premove sends it home until it is played.
+    const acted = target >= 0 && pieces.get(d.sq) === d.mesh && moveOrPremove(d.sq, target, isMove ? { dragged: true } : undefined);
+    if (acted && isMove) return;
+    // Not a legal drop (or a premove): fly back home.
+    const home = sqPos(d.sq);
+    const from = d.mesh.position.clone();
+    d.mesh.scale.setScalar(1);
+    tween(0.18, (t) => d.mesh.position.lerpVectors(from, home, t));
+    refreshMarkers();
     return;
   }
   if (!cancelled) onSquare(start.sq);
@@ -596,16 +730,17 @@ canvas.addEventListener('pointerup', (e) => endPress(e, false));
 canvas.addEventListener('pointercancel', (e) => endPress(e, true));
 
 function onSquare(sq) {
-  if (sq < 0 || !canInteract()) return;
-  const p = game.board[sq];
-  const targets = legalForSelected.filter((m) => m.to === sq);
-  if (targets.length) {
-    if (targets.length > 1) askPromotion(targets);
-    else humanMove(targets[0]);
+  if (viewPly !== null) {
+    exitHistory();
     return;
   }
-  if (p && p[0] === game.turn && sq !== selected) {
-    selectSquare(sq);
+  const mode = inputMode();
+  if (sq < 0 || !mode) return;
+  if (selected >= 0 && selected !== sq && moveOrPremove(selected, sq)) return;
+  if (mode === 'premove') cancelPremove();
+  const p = game.board[sq];
+  if (p && p[0] === ownColor(mode) && sq !== selected) {
+    selectSquare(sq, mode);
     sound.select();
   } else {
     selectSquare(-1);
@@ -632,6 +767,11 @@ function resetBoard(fen) {
   aiRequest++;
   generation++;
   game.reset(fen);
+  startFen = fen;
+  viewPly = null;
+  historyGame = null;
+  premove = null;
+  clockReset();
   sanList.length = 0;
   selectSquare(-1);
   gameOver = null;
@@ -653,15 +793,18 @@ function newGame() {
 
 function undo() {
   if (pendingPromotion || isOnline()) return;
+  if (viewPly !== null) exitHistory();
   aiRequest++;
   generation++;
   busy = false;
+  premove = null;
   const h = humanColor();
   let n = 0;
   // Step back to the human's turn (in AI mode the AI's reply is undone too).
   do {
     if (!game.undo()) break;
     sanList.pop();
+    clockUndo();
     n++;
   } while (h !== null && game.turn !== h && game.stack.length);
   if (!n) return;
@@ -692,16 +835,19 @@ function placeCamera() {
   if (W >= 900) left = panel.right;
   else if (W < H) top = panel.bottom;
   const pad = 12;
-  const aw = W - left - pad * 2, ah = H - top - pad * 2;
-  const SIZE = 8.3; // the board itself plus a thin margin
+  const bars = barsVisible ? 2 * (BAR_H + BAR_GAP) : 0;
+  const aw = W - left - pad * 2, ah = H - top - pad * 2 - bars;
+  const SIZE = 8.2; // the board itself plus a thin margin
   const wpp = Math.max(SIZE / aw, SIZE / ah); // world units per pixel at board level
   const dist = (H * wpp) / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const cx = left + pad + aw / 2 - W / 2, cy = top + pad + ah / 2 - H / 2;
+  const cx = left + pad + aw / 2 - W / 2, cy = top + pad + bars / 2 + ah / 2 - H / 2;
   const s = viewFrom === 'w' ? 1 : -1;
   // Screen right is +x and screen down is +z when White is at the bottom.
   camera.position.set(-cx * wpp * s, dist, -cy * wpp * s);
   camera.up.set(0, 0, -s);
   camera.lookAt(camera.position.x, 0, camera.position.z);
+  camera.updateMatrixWorld();
+  placeBars();
 }
 
 $('new').addEventListener('click', newGame);
@@ -832,7 +978,7 @@ function onLichessEvent(ev) {
 function joinGame(id, color) {
   if (online.gameId === id && !online.finished) return;
   online.stopGame?.();
-  Object.assign(online, { gameId: id, color, finished: false, players: null, clock: null, moves: 0, lastState: null, message: '', drawOffered: false });
+  Object.assign(online, { gameId: id, color, finished: false, players: null, clock: null, initialMs: 0, moves: 0, lastState: null, message: '', drawOffered: false });
   ui.mode.value = 'lichess';
   resetBoard();
   setView(color);
@@ -857,6 +1003,7 @@ function onGameMessage(id, msg) {
   if (msg.type === 'gameFull') {
     online.players = { w: msg.white, b: msg.black };
     online.initialFen = msg.initialFen || 'startpos';
+    online.initialMs = msg.clock ? msg.clock.initial : Math.max(msg.state.wtime || 0, msg.state.btime || 0);
     onGameState(msg.state);
   } else if (msg.type === 'gameState') {
     onGameState(msg);
@@ -905,11 +1052,12 @@ async function syncWithServer(st) {
     online.stopGame?.();
     online.stopGame = null;
     const winner = st.winner ? st.winner[0] : null;
-    gameOver = { over: true, reason: st.status, winner };
+    endGame({ over: true, reason: st.status, winner });
     sound.check();
     hideToast();
   }
   updateStatus();
+  tryPremove();
 }
 
 function sendOnlineMove(m) {
@@ -1078,6 +1226,144 @@ function placeCoordinates(view) {
   }
 }
 
+// ---------- clocks ----------
+// Local games can be played with a clock; online games use the lichess clock. Either way the
+// remaining time is shown as bars above and below the board.
+const CLOCK_OPTIONS = ['none', '1+0', '3+2', '5+3', '10+0', '15+10'];
+const BAR_H = 18, BAR_GAP = 6;
+const clk = { on: false, initial: 0, inc: 0, w: 0, b: 0, running: null, since: 0, history: [] };
+let barsVisible = false;
+
+function clockReset() {
+  const v = ui.clock.value;
+  clk.on = !isOnline() && v !== 'none';
+  const [min, inc] = clk.on ? v.split('+').map(Number) : [0, 0];
+  Object.assign(clk, { initial: min * 60000, inc: inc * 1000, w: min * 60000, b: min * 60000, running: null, history: [] });
+}
+
+const localClock = (c) => clk[c] - (clk.running === c ? performance.now() - clk.since : 0);
+
+// Called just before `color` makes a move. Clocks start once both sides have moved, like on lichess.
+function clockMoved(color) {
+  if (!clk.on) return;
+  clk.history.push({ w: clk.w, b: clk.b });
+  if (clk.running === color) clk[color] = localClock(color) + clk.inc;
+  clk.running = game.stack.length >= 1 ? other(color) : null;
+  clk.since = performance.now();
+}
+
+function clockUndo() {
+  if (!clk.on) return;
+  const h = clk.history.pop();
+  if (h) Object.assign(clk, h);
+  clk.running = game.stack.length >= 2 ? game.turn : null;
+  clk.since = performance.now();
+}
+
+function clockStop() {
+  if (clk.running) clk[clk.running] = Math.max(0, localClock(clk.running));
+  clk.running = null;
+}
+
+function checkFlag() {
+  if (!clk.on || !clk.running || gameOver || localClock(clk.running) > 0) return;
+  const loser = clk.running;
+  aiRequest++;
+  busy = false;
+  // Lose on time, unless the opponent has nothing left to mate with.
+  const rest = game.board.filter((p) => p && p[0] !== loser && p[1] !== 'K');
+  const canMate = rest.some((p) => p[1] !== 'N' && p[1] !== 'B') || rest.length > 1;
+  endGame({ over: true, reason: 'outoftime', winner: canMate ? other(loser) : null });
+  sound.check();
+  refreshMarkers();
+  updateStatus();
+}
+
+function clockInfo(color) {
+  if (isOnline()) {
+    if (!online.gameId || !online.clock) return null;
+    return { ms: clockOf(color), initial: online.initialMs || 1, running: !online.finished && online.moves >= 2 && game.turn === color };
+  }
+  if (!clk.on) return null;
+  return { ms: localClock(color), initial: clk.initial || 1, running: clk.running === color };
+}
+
+function renderBars() {
+  const visible = !!clockInfo('w');
+  if (visible !== barsVisible) {
+    barsVisible = visible;
+    ui.barTop.hidden = ui.barBottom.hidden = !visible;
+    placeCamera();
+  }
+  if (!visible) return;
+  for (const [el, color] of [[ui.barTop, other(viewFrom)], [ui.barBottom, viewFrom]]) {
+    const { ms, initial, running } = clockInfo(color);
+    const frac = Math.max(0, Math.min(1, ms / initial));
+    el.querySelector('.fill').style.width = `${(frac * 100).toFixed(2)}%`;
+    el.querySelector('.time').textContent = `${color === 'w' ? '○' : '●'} ${fmtClock(ms)}`;
+    el.classList.toggle('running', running);
+    el.classList.toggle('low', ms < Math.min(20000, initial * 0.1));
+  }
+}
+
+// Bars hug the board's top and bottom edges on screen.
+function placeBars() {
+  const a = new THREE.Vector3(-4, 0, -4).project(camera), b = new THREE.Vector3(4, 0, 4).project(camera);
+  const W = window.innerWidth, H = window.innerHeight;
+  const xs = [a.x, b.x].map((x) => (x + 1) / 2 * W), ys = [a.y, b.y].map((y) => (1 - y) / 2 * H);
+  const left = Math.min(...xs), width = Math.abs(xs[1] - xs[0]);
+  const top = Math.min(...ys), bottom = Math.max(...ys);
+  Object.assign(ui.barTop.style, { left: `${left}px`, width: `${width}px`, top: `${top - BAR_GAP - BAR_H}px`, height: `${BAR_H}px` });
+  Object.assign(ui.barBottom.style, { left: `${left}px`, width: `${width}px`, top: `${bottom + BAR_GAP}px`, height: `${BAR_H}px` });
+}
+
+// ---------- move history ----------
+// Browse earlier positions without touching the game; any move or board click returns to it.
+function showPly(k) {
+  const n = game.stack.length;
+  k = Math.max(0, Math.min(n, k));
+  if (k === n) {
+    if (viewPly !== null) exitHistory();
+    return;
+  }
+  selectSquare(-1);
+  const g = new Chess();
+  g.reset(startFen);
+  for (let i = 0; i < k; i++) g.make(game.stack[i].m, true);
+  viewPly = k;
+  historyGame = g;
+  syncPieces(g);
+  refreshMarkers();
+  updateStatus();
+  sound.tap();
+}
+
+function exitHistory() {
+  viewPly = null;
+  historyGame = null;
+  syncPieces();
+  refreshMarkers();
+  updateStatus();
+}
+
+const currentPly = () => (viewPly === null ? game.stack.length : viewPly);
+$('hist-first').addEventListener('click', () => showPly(0));
+$('hist-prev').addEventListener('click', () => showPly(currentPly() - 1));
+$('hist-next').addEventListener('click', () => showPly(currentPly() + 1));
+$('hist-last').addEventListener('click', () => showPly(game.stack.length));
+ui.moves.addEventListener('click', (e) => {
+  const ply = e.target.dataset && e.target.dataset.ply;
+  if (ply) showPly(Number(ply));
+});
+window.addEventListener('keydown', (e) => {
+  if (e.target.closest && e.target.closest('input, select, textarea')) return;
+  const keys = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -Infinity, ArrowDown: Infinity, Home: -Infinity, End: Infinity };
+  if (!(e.key in keys)) return;
+  e.preventDefault();
+  const d = keys[e.key];
+  showPly(Number.isFinite(d) ? currentPly() + d : d < 0 ? 0 : game.stack.length);
+});
+
 // ---------- loop ----------
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -1112,17 +1398,37 @@ renderer.setAnimationLoop(() => {
     }
     const burn = mesh.userData.burn;
     if (burn > 0 && mesh.parent) {
-      sources.push({ key: mesh.uuid, pos: mesh.position, level: burn });
       const glow = (0.6 + Math.min(burn, 6) * 0.1) * (0.8 + Math.sin(t * 13 + sq) * 0.2);
-      mesh.userData.body.material.emissiveIntensity = glow * 0.06;
+      mesh.userData.body.material.emissiveIntensity = fireOn ? glow * 0.06 : 0;
+      if (fireOn) sources.push({ key: mesh.uuid, pos: mesh.position, level: burn });
     }
   }
   fire.update(dt, t, sources);
-  if (isOnline() && online.gameId && (clockTick += dt) > 0.1) {
+  if ((clockTick += dt) > 0.1) {
     clockTick = 0;
-    renderOnline();
+    checkFlag();
+    renderBars();
+    if (isOnline() && online.gameId) renderOnline();
   }
   renderer.render(scene, camera);
+});
+
+ui.pieces.value = pieceSet;
+ui.pieces.addEventListener('change', async () => {
+  pieceSet = ui.pieces.value;
+  writePref('pieces', pieceSet);
+  setPieceArt(await loadPieceArt(pieceSet));
+  syncPieces(historyGame || game);
+});
+ui.fire.checked = fireOn;
+ui.fire.addEventListener('change', () => {
+  fireOn = ui.fire.checked;
+  writePref('fire', fireOn ? 'on' : 'off');
+});
+ui.clock.value = CLOCK_OPTIONS.includes(readPref('clock')) ? readPref('clock') : 'none';
+ui.clock.addEventListener('change', () => {
+  writePref('clock', ui.clock.value);
+  newGame();
 });
 
 resetBoard();
@@ -1140,4 +1446,4 @@ lichess.handleRedirect().then((done) => {
   olMessage(`Вход не удался: ${e.message}`);
 });
 
-window.__chess = { game, playMove, pieces, debris, camera, online, onLichessEvent, setView }; // for debugging from the console
+window.__chess = { game, playMove, pieces, debris, camera, online, onLichessEvent, setView, clk, fire, showPly }; // for debugging from the console

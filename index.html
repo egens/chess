@@ -29,6 +29,16 @@
           <option value="lichess">Онлайн через Lichess</option>
         </select>
       </label>
+      <label class="local-only">Часы
+        <select id="clock">
+          <option value="none">Без часов</option>
+          <option value="1+0">1+0 · пуля</option>
+          <option value="3+2">3+2 · блиц</option>
+          <option value="5+3">5+3 · блиц</option>
+          <option value="10+0">10+0 · рапид</option>
+          <option value="15+10">15+10 · рапид</option>
+        </select>
+      </label>
       <label class="local-only">Сила компьютера
         <select id="level">
           <option value="1">Новичок</option>
@@ -68,17 +78,35 @@
         </div>
         <p id="ol-msg" class="hint"></p>
       </section>
+      <div class="row">
+        <label class="grow">Фигуры
+          <select id="pieces">
+            <option value="cburnett">Классические</option>
+            <option value="staunty">Staunty</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="fire"> Огонь</label>
+      </div>
       <div class="buttons">
         <button id="new" class="local-only">Новая игра</button>
         <button id="undo" class="local-only">Отменить ход</button>
         <button id="flip">Повернуть доску</button>
         <button id="sound" title="Звук">🔊</button>
       </div>
+      <div class="history" title="История ходов (← →, Home, End)">
+        <button id="hist-first" aria-label="К началу">⏮</button>
+        <button id="hist-prev" aria-label="Ход назад">◀</button>
+        <button id="hist-next" aria-label="Ход вперёд">▶</button>
+        <button id="hist-last" aria-label="К текущей позиции">⏭</button>
+      </div>
       <ol id="moves"></ol>
-      <p class="hint">Перетащите фигуру на нужную клетку или кликните по фигуре, затем по клетке. Фигура, взявшая чужую, загорается — и горит тем сильнее, чем больше взяла.</p>
+      <p class="hint">Перетащите фигуру на нужную клетку или кликните по фигуре, затем по клетке. Пока ходит соперник, можно заранее задать один ход (премув), клик мимо его отменит. Фигура, взявшая чужую, загорается — и горит тем сильнее, чем больше взяла.</p>
       <p class="hint"><a href="v1/">Версия v1</a> — 3D-доска со свободной камерой.</p>
     </div>
   </aside>
+
+  <div id="bar-top" class="tbar" hidden><div class="fill"></div><span class="time"></span></div>
+  <div id="bar-bottom" class="tbar" hidden><div class="fill"></div><span class="time"></span></div>
 
   <div id="promo" hidden>
     <p>Превращение пешки</p>
