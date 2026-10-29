@@ -6,12 +6,15 @@ import { Sound } from './sound.js';
 import { Fire } from './fire.js';
 import { burnLevels } from './burn.js';
 import { Lichess } from './lichess.js';
+import { Idle } from './idle.js';
 
 function readPref(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function writePref(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } }
 
 let pieceSet = PIECE_SETS[readPref('pieces')] ? readPref('pieces') : 'cburnett';
 let fireOn = readPref('fire') !== 'off';
+const idle = new Idle();
+idle.enabled = readPref('idle') !== 'off';
 setPieceArt(await loadPieceArt(pieceSet));
 
 // ---------- scene ----------
@@ -135,7 +138,7 @@ const $ = (id) => document.getElementById(id);
 const ui = {
   status: $('status'), moves: $('moves'), mode: $('mode'), level: $('level'),
   promo: $('promo'), banner: $('banner'), bannerText: $('banner-text'),
-  pieces: $('pieces'), fire: $('fire'), clock: $('clock'),
+  pieces: $('pieces'), fire: $('fire'), idle: $('idle'), clock: $('clock'),
   barTop: $('bar-top'), barBottom: $('bar-bottom'),
 };
 
@@ -1403,6 +1406,8 @@ renderer.setAnimationLoop(() => {
       if (fireOn) sources.push({ key: mesh.uuid, pos: mesh.position, level: burn });
     }
   }
+  // Hold new idle moves while a move is animating or a piece is in hand.
+  idle.step(t, pieces, { calm: busy || !!drag, skip: drag && drag.mesh });
   fire.update(dt, t, sources);
   if ((clockTick += dt) > 0.1) {
     clockTick = 0;
@@ -1421,6 +1426,11 @@ ui.pieces.addEventListener('change', async () => {
   syncPieces(historyGame || game);
 });
 ui.fire.checked = fireOn;
+ui.idle.checked = idle.enabled;
+ui.idle.addEventListener('change', () => {
+  idle.enabled = ui.idle.checked;
+  writePref('idle', idle.enabled ? 'on' : 'off');
+});
 ui.fire.addEventListener('change', () => {
   fireOn = ui.fire.checked;
   writePref('fire', fireOn ? 'on' : 'off');
@@ -1446,4 +1456,4 @@ lichess.handleRedirect().then((done) => {
   olMessage(`Вход не удался: ${e.message}`);
 });
 
-window.__chess = { game, playMove, pieces, debris, camera, online, onLichessEvent, setView, clk, fire, showPly }; // for debugging from the console
+window.__chess = { game, playMove, pieces, debris, camera, online, onLichessEvent, setView, clk, fire, showPly, idle }; // for debugging from the console
